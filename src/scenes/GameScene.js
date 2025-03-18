@@ -29,17 +29,20 @@ class GameScene extends Phaser.Scene {
     create() {
         // Background zoomed to bottom right
         this.background = this.add.image(0, 0, 'background1');
-        this.background.setScale(2.0);
-        this.background.setOrigin(0, 0);
+        this.background.setScale(2);  // Set scale to 2
+        this.background.setOrigin(0, 0);  
         this.background.setPosition(-400, -100);
         this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+        // Setup blast cleanup
+        this.events.on('update', this.cleanupBlasts, this);
 
         this.backgroundMusic = this.sound.add('background-music', { loop: true })
         this.backgroundMusic.play()
 
         // Set up the firing logic
         this.spaceKey.on('down', () => {
-            this.fireLaser(); // Call the fireLaser method to handle the blast
+            this.fireLaser();
         });
 
         // Set world bounds to match just the visible background size
@@ -47,7 +50,7 @@ class GameScene extends Phaser.Scene {
 
         // Create player controller with lower ground level
         const startX = 800;
-        const groundLevel = 525;  // Lower ground level (was 525)
+        const groundLevel = 525;  // Lower ground level
         this.playerController = new Player(this, startX, groundLevel);
         
         // Get player sprite for camera following
@@ -55,8 +58,8 @@ class GameScene extends Phaser.Scene {
         this.cameras.main.startFollow(player);
         this.cameras.main.setBounds(-400, -100, this.background.width * 2, this.background.height * 2);
         this.cameras.main.setLerp(0.1, 0.1);
-        this.cameras.main.setZoom(1.5);
-        this.cameras.main.centerOn(startX, groundLevel);
+        this.cameras.main.setZoom(.85);
+        this.cameras.main.centerOn((-400+this.background.width * 2)/2, (groundLevel+this.background.height*2)/2);
 
         // Create a group for blasts with physics enabled
         this.blasts = this.physics.add.group({
@@ -64,9 +67,6 @@ class GameScene extends Phaser.Scene {
             immovable: false,
             collideWorldBounds: true
         });
-
-        // Add space key for shooting
-        this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
         // Create enemy blasts group with physics enabled
         this.enemyBlasts = this.physics.add.group({
@@ -85,11 +85,11 @@ class GameScene extends Phaser.Scene {
         const t800Height = 525;  // Same as player's ground level
         this.createT800(200, t800Height, 100, 300);          // First T-800
         this.createT800(-100, t800Height, -200, 0);          // Second T-800
-        this.createT800(-300, t800Height, -400, -200);       // Third T-800
+        this.createT800(-250, t800Height, -350, -150);       // Third T-800 - adjusted position and patrol bounds
 
         // Create health text display in top left corner
-        this.healthText = this.add.text(150, 110, `Health: 9`, {
-            fontSize: '28px',
+        this.healthText = this.add.text(-30, -30, `Health: 9`, {
+            fontSize: '48px',
             fontFamily: 'Arial Black',
             fill: '#FFD700',  // Yellow color
             stroke: '#000000',  // Black outline
@@ -128,17 +128,19 @@ class GameScene extends Phaser.Scene {
     }
 
     createT800(x, y, leftBound, rightBound) {
-        const t800 = new T800(this, x, y, leftBound, rightBound);
+        const t800 = new Terminator(this, x, y, leftBound, rightBound, 't800');
         const sprite = t800.getSprite();
-        sprite.t800Instance = t800;  // Link the sprite to its T800 instance
-        sprite.body.allowGravity = false;  // Keep T-800 at fixed height
-        sprite.body.setImmovable(true);    // Prevent movement up/down
+        sprite.body.allowGravity = false;
+        sprite.body.setImmovable(true);
+        sprite.body.enable = true;
+        sprite.body.setSize(40, 70);
         this.enemies.add(sprite);
         this.t800s.push(t800);
         return t800;
     }
 
     handleEnemyHit(blast, enemy) {
+        console.log('Enemy hit!'); // Debug log
         this.sound.play('explosion');
         // Remove the blast
         blast.destroy();
@@ -146,9 +148,23 @@ class GameScene extends Phaser.Scene {
         // Find the T800 instance that owns this sprite
         const t800 = enemy.t800Instance;
         if (t800) {
-            // Use the T800's takeDamage method
-            const isDead = t800.takeDamage();
-            if (isDead) {
+            // Reduce health
+            enemy.health--;
+            
+            // Flash effect when hit
+            this.tweens.add({
+                targets: enemy,
+                alpha: 0.5,
+                duration: 100,
+                yoyo: true,
+                repeat: 0,
+                onComplete: () => {
+                    enemy.alpha = 1;
+                }
+            });
+
+            // Destroy only if health reaches 0
+            if (enemy.health <= 0) {
                 // Remove from t800s array
                 this.t800s = this.t800s.filter(t => t !== t800);
                 // Destroy the enemy
@@ -259,7 +275,7 @@ class GameScene extends Phaser.Scene {
         }
 
         // Second transition (right side of Dystopian2)
-        else if (this.currentBackground === 2 && this.playerController.getSprite().x >= 800) {  // Changed from 400 to 800
+        else if (this.currentBackground === 2 && this.playerController.getSprite().x >= 800) {
             this.transitionBackground('background3', 0);
         }
 
@@ -277,31 +293,47 @@ class GameScene extends Phaser.Scene {
             }
         });
 
-        // Update T-1000 patrol if it exists
-        if (this.t1000 && this.t1000.active) {
-            this.updateT1000Patrol();
+        // Update T-1000 if it exists and is active
+        if (this.t1000) {
+            this.t1000.update();
         }
     }
 
     enemyShoot(enemy) {
-        // Calculate blast starting position with offset like player's blast
-        const offsetX = enemy.flipX ? 65 : -65;  // Same offset as player
-        const offsetY = -2;  // Same vertical offset as player
+        const offsetX = enemy.flipX ? 65 : -65;
+        const offsetY = -2;
         
         const blast = this.enemyBlasts.create(
             enemy.x + offsetX,
             enemy.y + offsetY,
-            'enemyBlast'
+            'blast'
         );
         
-        blast.setScale(1.5);  // Same scale as player's blast
+        blast.setScale(1.5);
+        blast.setSize(30, 10);
+        blast.body.enable = true;
         
-        // Set horizontal-only velocity like player's blast but slower
-        const direction = enemy.flipX ? 1 : -1;
-        blast.setVelocityX(300 * direction);  // Changed from 600 to 300 for slower movement
+        const direction = enemy.flipX ? 1 : -1;  // Fixed: when flipX is true (facing right), shoot right
+        // Set faster velocity for background2
+        let blastSpeed;
+        if (this.currentBackground === 1) {
+            blastSpeed = 400;  // Moderate speed for first background
+        } else if (this.currentBackground === 2) {
+            blastSpeed = 800;  // Slightly faster for second background
+        }
+
+        blast.setVelocityX(blastSpeed * direction);
         
-        blast.checkWorldBounds = true;
-        blast.outOfBoundsKill = true;
+        // Make blast disappear when it hits world bounds
+        blast.setCollideWorldBounds(true);
+        blast.body.onWorldBounds = true;
+        
+        // Listen for worldbounds collision and destroy the blast
+        this.physics.world.on('worldbounds', (body) => {
+            if (body.gameObject === blast) {
+                blast.destroy();
+            }
+        });
     }
 
     transitionBackground(newBgKey, newPosition) {
@@ -330,87 +362,81 @@ class GameScene extends Phaser.Scene {
                     this.background.setPosition(newPosition, -100);
                     this.background.setScale(2.0);
                     this.physics.world.setBounds(newPosition, -100, this.background.width * 2, this.background.height * 2);
+                    
+                    // Update camera settings to match background1
                     this.cameras.main.setBounds(newPosition, -100, this.background.width * 2, this.background.height * 2);
+                    this.cameras.main.setLerp(0.1, 0.1);
+                    this.cameras.main.setZoom(.85);
+                    this.cameras.main.centerOn((newPosition + this.background.width * 2)/2, (groundLevel + this.background.height*2)/2);
                     
-                    // Use lower position for background2
-                    this.playerController.setPosition(playerRelativeX, 540);
+                    // Keep player at same height and ensure they're not falling
+                    this.playerController.setPosition(playerRelativeX, groundLevel);
+                    const playerSprite = this.playerController.getSprite();
+                    playerSprite.setVelocityY(0);  // Stop any vertical movement
+                    
+                    // Clear existing enemies and blasts
+                    this.enemies.clear(true, true);
+                    this.enemyBlasts.clear(true, true);
+                    this.t800s = [];
 
+                    // Add three new T-800s in background2
+                    const t800Height = 540;  // Same height as player
+                    this.createT800(200, t800Height, 100, 300);    // First T-800
+                    this.createT800(500, t800Height, 400, 600);    // Second T-800
+                    this.createT800(800, t800Height, 700, 900);    // Third T-800
 
+                    // Re-establish collision detection
+                    const playerBlasts = this.playerController.getBlasts();
+                    this.physics.add.collider(playerBlasts, this.enemies, this.handleEnemyHit, null, this);
+                    this.physics.add.collider(this.playerController.getSprite(), this.enemyBlasts, this.handlePlayerHit, null, this);
                 }
-
-                
                 else if (newBgKey === 'background3') {
-                    // Calculate scale to fit screen
-                    const scaleX = this.cameras.main.width / this.background.width;
-                    const scaleY = this.cameras.main.height / this.background.height;
-                    const scale = Math.max(scaleX, scaleY);
+                    this.background.setPosition(0, -100);
+                    this.background.setScale(2.0);
                     
-                    this.background.setScale(scale);
-                    this.background.setPosition(0, 0);
+                    // Set bounds to match the background
+                    this.physics.world.setBounds(0, -100, this.background.width * 2, this.background.height * 2);
                     
-                    // Set bounds to match the scaled background
-                    const finalWidth = this.background.width * scale;
-                    const finalHeight = this.background.height * scale;
-                    this.physics.world.setBounds(0, 0, finalWidth, finalHeight);
-                    this.cameras.main.setBounds(0, 0, finalWidth, finalHeight);
+                    // Update camera settings to match background1
+                    this.cameras.main.setBounds(0, -100, this.background.width * 2, this.background.height * 2);
+                    this.cameras.main.setLerp(0.1, 0.1);
+                    this.cameras.main.setZoom(.85);
+                    this.cameras.main.centerOn((this.background.width * 2)/2, (groundLevel + this.background.height*2)/2);
                     
                     // Position player at the right side of final battle
-                    this.playerController.setPosition(finalWidth - 100, 525);
+                    this.playerController.setPosition(this.background.width * 2 - 100, 525);
                     
                     // Add Skynet core in final battle
                     this.skynetCore = this.physics.add.sprite(100, 500, 'skynet-core');
                     this.skynetCore.setScale(2.0);
-                    this.skynetCore.health = 20;
+                    this.skynetCore.health = 10;
                     this.skynetCore.setImmovable(true);
                     this.skynetCore.body.allowGravity = false;
                     this.skynetCore.body.moves = false;
+                    
+                    // Create T-1000 with extended patrol bounds
+                    this.t1000 = this.createT1000(250, 525, 200, 800);  // Extended right bound from 600 to 800
                     
                     // Add collision with player's blasts
                     const playerBlasts = this.playerController.getBlasts();
                     this.physics.add.collider(playerBlasts, this.skynetCore, this.handleCoreHit, null, this);
 
-                    // Add T-1000 near Skynet core
-                    this.t1000 = this.physics.add.sprite(250, 525, 't1000');
-                    this.t1000.setScale(2.0);
-                    this.t1000.setBounce(0.2);
-                    this.t1000.setCollideWorldBounds(true);
-                    this.t1000.body.enable = true;
-                    this.t1000.setSize(40, 70);
-                    this.t1000.body.allowGravity = false;
-                    this.t1000.body.setImmovable(true);
-                    this.t1000.health = 10;
-                    this.t1000.direction = 1;
-                    this.t1000.patrolSpeed = 500;
-                    this.t1000.setVelocityX(this.t1000.patrolSpeed);
-                    this.t1000.leftBound = 200;   // Add patrol bounds
-                    this.t1000.rightBound = 600;  // Add patrol bounds
-                    
-                    // Add collision with player's blasts
-                    this.physics.add.overlap(
-                        playerBlasts,
-                        this.t1000,
-                        this.handleT1000Hit,
-                        null,
-                        this
-                    );
-
-                    // Add collision with player
-                    this.physics.add.overlap(
+                    // Add collisions for T-1000
+                    this.physics.add.collider(
                         this.playerController.getSprite(),
-                        this.t1000,
+                        this.t1000.getSprite(),
                         this.handleT1000PlayerCollision,
                         null,
                         this
                     );
-                }
-                else {
-                    this.background.setPosition(newPosition, -100);
-                    this.background.setScale(2.0);
-                    this.physics.world.setBounds(newPosition, -100, this.background.width * 2, this.background.height * 2);
-                    this.cameras.main.setBounds(newPosition, -100, this.background.width * 2, this.background.height * 2);
                     
-                    // Keep player at consistent ground level
-                    this.playerController.setPosition(playerRelativeX, groundLevel);
+                    this.physics.add.collider(
+                        playerBlasts,
+                        this.t1000.getSprite(),
+                        this.handleT1000Hit,
+                        null,
+                        this
+                    );
                 }
                 
                 // Restore player health to what it was before transition
@@ -425,8 +451,6 @@ class GameScene extends Phaser.Scene {
                     this.physics.add.collider(playerBlasts, this.skynetCore, this.handleCoreHit, null, this);
                 }
                 
-                this.cameras.main.setZoom(1.5);
-                
                 this.tweens.add({
                     targets: this.background,
                     alpha: 1,
@@ -436,43 +460,84 @@ class GameScene extends Phaser.Scene {
         });
     }
 
-    updateT1000Patrol() {
-        // Patrol logic
-        if (this.t1000.x >= this.t1000.rightBound) {
-            this.t1000.direction = -1;
-            this.t1000.flipX = false;
-        } else if (this.t1000.x <= this.t1000.leftBound) {
-            this.t1000.direction = 1;
-            this.t1000.flipX = true;
-        }
-        
-        // Set patrol velocity
-        this.t1000.setVelocityX(this.t1000.patrolSpeed * this.t1000.direction);
+    createT1000(x, y, leftBound, rightBound) {
+        const t1000 = new Terminator(this, x, y, leftBound, rightBound, 't1000');
+        const sprite = t1000.getSprite();
+        sprite.body.allowGravity = false;
+        sprite.body.setImmovable(true);
+        sprite.body.enable = true;
+        sprite.body.setSize(40, 70);
+        this.enemies.add(sprite);
+        this.t1000s.push(t1000);
+        return t1000;
     }
 
-    handleT1000Hit(blast, t1000) {
+    handleT1000Hit(t1000, blast) {
         // Remove the blast
         this.sound.play('explosion');
         blast.destroy();
         
-        // Reduce T-1000 health
-        t1000.health--;
-        
-        // Flash effect when hit
-        this.tweens.add({
-            targets: t1000,
-            alpha: 0.5,
-            duration: 100,
-            yoyo: true,
-            repeat: 0,
-            onComplete: () => {
-                t1000.alpha = 1;
-            }
-        });
+        // Get the T1000 instance and reduce health
+        const t1000Instance = t1000.t1000Instance;
+        if (t1000Instance) {
+            t1000.health--;
+            console.log('T-1000 health:', t1000.health);
+            
+            // Flash effect when hit
+            this.tweens.add({
+                targets: t1000,
+                alpha: 0.5,
+                duration: 100,
+                yoyo: true,
+                repeat: 0,
+                onComplete: () => {
+                    t1000.alpha = 1;
+                }
+            });
 
-        // Only destroy when health is exactly 0
-        if (t1000.health === 0) {
-            t1000.destroy();
+            // Only destroy when health reaches 0 (after 5 hits)
+            if (t1000.health <= 0) {
+                t1000Instance.destroy();
+                // Remove from t1000s array
+                this.t1000s = this.t1000s.filter(t => t !== t1000Instance);
+                console.log('T-1000 destroyed!');
+            }
+        }
+    }
+
+    handleT1000PlayerCollision(player, t1000) {
+        // Only process collision if both sprites are active
+        if (player.active && t1000.active) {
+            // Reduce player lives
+            this.playerLives--;
+            this.healthText.setText(`Health: ${this.playerLives}`);
+            
+            // Play hurt sound
+            this.sound.play('hurt');
+            
+            // Flash effect for player
+            this.tweens.add({
+                targets: player,
+                alpha: 0.5,
+                duration: 100,
+                yoyo: true,
+                repeat: 0,
+                onComplete: () => {
+                    player.alpha = 1;
+                    // Check for game over
+                    if (this.playerLives <= 0) {
+                        this.gameOver();
+                    }
+                }
+            });
+            
+            // Add brief invulnerability period
+            player.body.enable = false;
+            this.time.delayedCall(1000, () => {
+                if (player.active) {
+                    player.body.enable = true;
+                }
+            });
         }
     }
 
@@ -566,37 +631,29 @@ class GameScene extends Phaser.Scene {
         });
     }
 
-    handleT1000PlayerCollision(player, t1000) {
-        // Only handle collision if player is not invulnerable
-        if (!player.isInvulnerable) {
-            // Reduce player lives
-            this.playerLives--;
-            this.sound.play('hurt');
-            
-            // Update health text
-            this.healthText.setText(`Health: ${this.playerLives}`);
-
-            // Flash effect when hit
-            this.tweens.add({
-                targets: player,
-                alpha: 0.5,
-                duration: 100,
-                yoyo: true,
-                repeat: 0,
-                onComplete: () => {
-                    player.alpha = 1;
-                    // Check for game over
-                    if (this.playerLives <= 0) {
-                        this.gameOver();
-                    }
-                }
-            });
-
-            // Make player invulnerable for 1 second
-            player.isInvulnerable = true;
-            this.time.delayedCall(1000, () => {
-                player.isInvulnerable = false;
-            });
-        }
+    cleanupBlasts() {
+        // Get all blast groups
+        const playerBlasts = this.playerController.getBlasts().getChildren();
+        const enemyBlasts = this.enemyBlasts ? this.enemyBlasts.getChildren() : [];
+        
+        // Cleanup player blasts
+        playerBlasts.forEach(blast => {
+            if (blast.x < this.cameras.main.worldView.x || 
+                blast.x > this.cameras.main.worldView.x + this.cameras.main.worldView.width ||
+                blast.y < this.cameras.main.worldView.y ||
+                blast.y > this.cameras.main.worldView.y + this.cameras.main.worldView.height) {
+                blast.destroy();
+            }
+        });
+        
+        // Cleanup enemy blasts
+        enemyBlasts.forEach(blast => {
+            if (blast.x < this.cameras.main.worldView.x || 
+                blast.x > this.cameras.main.worldView.x + this.cameras.main.worldView.width ||
+                blast.y < this.cameras.main.worldView.y ||
+                blast.y > this.cameras.main.worldView.y + this.cameras.main.worldView.height) {
+                blast.destroy();
+            }
+        });
     }
 } 

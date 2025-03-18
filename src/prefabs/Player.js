@@ -6,16 +6,15 @@ class Player {
         this.spaceKey = scene.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
         
         // Player properties
-        this.isJumping = false;
-        this.jumpTimer = 0;
-        this.groundLevel = 525;  // Set a single consistent ground level
+        this.groundLevel = 525;      // Base ground level
         
-        // Setup player
+        // Setup player physics
         this.player.setScale(1.5);
-        this.player.setBounce(0.2);
+        this.player.setBounce(0.1);  // Reduced bounce for better control
         this.player.setCollideWorldBounds(true);
-        this.player.body.allowGravity = false;
-        this.player.body.setImmovable(true);
+        this.player.body.setGravityY(800);  // Enable gravity
+        this.player.body.setDrag(1000);     // Add drag for better control
+        this.player.body.setMaxVelocity(500, 700);  // Limit max speeds
         
         // Create blasts group
         this.blasts = scene.physics.add.group({
@@ -27,7 +26,6 @@ class Player {
 
     update() {
         this.handleMovement();
-        this.handleJump();
         this.handleDuck();
         this.handleShooting();
     }
@@ -45,22 +43,6 @@ class Player {
             this.player.setVelocityX(0);
             if (!this.cursors.down.isDown) {
                 this.player.setTexture('stand');
-            }
-        }
-    }
-
-    handleJump() {
-        if (this.cursors.up.isDown && !this.isJumping) {
-            this.isJumping = true;
-            this.jumpTimer = 0;
-            this.player.y -= 200;
-        }
-
-        if (this.isJumping) {
-            this.jumpTimer++;
-            if (this.jumpTimer > 35) {
-                this.player.y = this.groundLevel;  // Return to consistent ground level
-                this.isJumping = false;
             }
         }
     }
@@ -99,9 +81,16 @@ class Player {
             const direction = this.player.flipX ? 1 : -1;
             blast.setVelocityX(600 * direction);
             
-            // Make blast disappear when it goes off screen
-            blast.checkWorldBounds = true;
-            blast.outOfBoundsKill = true;
+            // Make blast disappear when it hits world bounds
+            blast.setCollideWorldBounds(true);
+            blast.body.onWorldBounds = true;
+            
+            // Listen for worldbounds collision and destroy the blast
+            this.scene.physics.world.on('worldbounds', (body) => {
+                if (body.gameObject === blast) {
+                    blast.destroy();
+                }
+            });
         }
     }
 
@@ -124,5 +113,6 @@ class Player {
 
     getSprite() {
         return this.player;
+
     }
 } 
